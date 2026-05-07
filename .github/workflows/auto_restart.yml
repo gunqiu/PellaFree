@@ -1,4 +1,4 @@
-name: Pella 服务器监控 + 强制启停重启
+name: Pella 服务器监控 + 强制启停重启（修复版）
 on:
   schedule:
     - cron: "*/30 * * * *"
@@ -17,55 +17,51 @@ jobs:
     steps:
       - name: 检测状态 + 强制启停重启
         run: |
-          # ========== 第一步：检测状态 ==========
           echo "🔍 检测服务器状态..."
+          # 1. 修正状态检测路径
           RES=$(curl -s -L \
             -H "Authorization: Bearer $API_KEY" \
-            "$PTERO_URL/api/client/servers/$SERVER_ID/resources")
+            "$PTERO_URL/api/client/servers/$SERVER_ID")
           
           echo "📄 API返回: $RES"
-          STATE=$(echo "$RES" | grep -o '"state":"[^"]*"' | cut -d'"' -f4)
+          # 2. 修正状态字段
+          STATE=$(echo "$RES" | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
           echo "✅ 当前状态: $STATE"
 
-          # ========== 只有离线/崩溃状态才处理 ==========
           if [[ "$STATE" != "running" && "$STATE" != "starting" ]]; then
-            echo "❌ 服务器离线，执行强制启停流程..."
+            echo "❌ 服务器离线，执行强制启停..."
 
-            # 1. 先发送 STOP 信号，确保进程完全关闭
+            # 3. 修正停止/启动 API 路径
             echo "🔌 发送 STOP 信号..."
             curl -s -L -X POST \
               -H "Authorization: Bearer $API_KEY" \
               -H "Content-Type: application/json" \
-              -d '{"signal":"stop"}' \
-              "$PTERO_URL/api/client/servers/$SERVER_ID/signals"
+              -d '{"signal": "stop"}' \
+              "$PTERO_URL/api/client/servers/$SERVER_ID/power"
             
-            # 等待10秒，让服务器完全离线
-            echo "⏳ 等待10秒，让服务器停止..."
             sleep 10
 
-            # 2. 再发送 START 信号，强制拉起
             echo "🚀 发送 START 信号..."
             RESP=$(curl -s -L -w "%{http_code}" -X POST \
               -H "Authorization: Bearer $API_KEY" \
               -H "Content-Type: application/json" \
-              -d '{"signal":"start"}' \
-              "$PTERO_URL/api/client/servers/$SERVER_ID/signals")
+              -d '{"signal": "start"}' \
+              "$PTERO_URL/api/client/servers/$SERVER_ID/power")
             
             HTTP_CODE=${RESP: -3}
-            echo "🔌 START API 响应码: $HTTP_CODE"
+            echo "🔌 API响应码: $HTTP_CODE"
 
-            # 3. 根据结果发送通知
             if [[ "$HTTP_CODE" == "204" || "$HTTP_CODE" == "200" ]]; then
-              echo "✅ 强制启停成功，服务器正在启动"
+              echo "✅ 强制启停成功"
               curl -s "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" \
                 -d chat_id="$TG_CHAT_ID" \
-                -d text="✅ Pella 服务器离线，已执行强制启停重启！"
+                -d text="✅ Pella 服务器离线，已强制重启"
             else
-              echo "❌ 强制启停失败，响应码: $HTTP_CODE"
+              echo "❌ 重启失败，响应码: $HTTP_CODE"
               curl -s "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" \
                 -d chat_id="$TG_CHAT_ID" \
-                -d text="❌ Pella 服务器离线，但强制重启失败！API码: $HTTP_CODE"
+                -d text="❌ Pella 服务器离线，但重启失败！码: $HTTP_CODE"
             fi
           else
-            echo "✅ 服务器正常运行，无需处理"
+            echo "✅ 服务器正常运行"
           fi
