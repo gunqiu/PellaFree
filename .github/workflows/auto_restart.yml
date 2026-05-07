@@ -1,36 +1,49 @@
-name: 服务器挂掉自动重启
+name: Pella 服务器监控 + 自动重启（带TG通知）
 on:
   schedule:
     - cron: "*/10 * * * *"  # 每10分钟检测一次
   workflow_dispatch:
 
 jobs:
-  check:
+  check-and-restart:
     runs-on: ubuntu-latest
+    env:
+      PANEL_URL: ${{ secrets.PTERO_URL }}
+      SERVER_ID: ${{ secrets.SERVER_ID }}
+      API_KEY: ${{ secrets.API_KEY }}
+      RESTART_URL: ${{ secrets.RESTART_API }}
+      TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+      TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
     steps:
-      - name: 检测状态 + 离线自动重启
-        env:
-          PTERO_URL: ${{ secrets.PTERO_URL }}
-          SERVER_ID: ${{ secrets.SERVER_ID }}
-          API_KEY: ${{ secrets.API_KEY }}
-          RESTART_API: ${{ secrets.RESTART_API }}
+      - name: 检测状态 + 发送通知
         run: |
-          echo "🔍 检测服务器状态..."
+          echo "🔍 正在检测服务器状态..."
 
-          # 获取服务器状态
-          res=$(curl -s "$PTERO_URL/api/client/servers/$SERVER_ID/resources" \
-            -H "Authorization: Bearer $API_KEY" \
-            -H "Accept: "application/json")
+          # 1. 获取服务器状态
+          RES=$(curl -s -H "Authorization: Bearer $API_KEY" \
+            "$PANEL_URL/api/client/servers/$SERVER_ID/resources")
+          STATE=$(echo "$RES" | grep -o '"current_state":"[^"]*"' | cut -d'"' -f4)
+          echo "📊 当前状态：$STATE"
 
-          # 提取状态
-          state=$(echo "$res" | grep -o '"current_state":"[^"]*"' | cut -d '"' -f4)
-          echo "当前状态：$state"
-
-          # 如果离线 → 自动重启
-          if [[ "$state" != "running" && "$state" != "starting" ]]; then
-            echo "❌ 服务器挂了，自动重启..."
-            curl -s "$RESTART_API"
-            echo "✅ 重启指令已发送"
+          # 2. 发送基础状态通知（可选，也可以只在异常时发）
+          if [[ "$STATE" == "running" ]]; then
+            TEXT="✅ 服务器运行正常"
+          elif [[ "$STATE" == "starting" ]]; then
+            TEXT="⏳ 服务器正在启动中"
           else
-            echo "✅ 服务器正常"
+            TEXT="❌ 服务器离线，正在自动重启..."
+          fi
+
+          # 3. 调用TG通知
+          curl -s "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" \
+            -d chat_id="$TG_CHAT_ID" \
+            -d text="Pella 服务器状态通知\n$TEXT"
+
+          # 4. 离线则自动重启
+          if [[ "$STATE" != "running" && "$STATE" != "starting" ]]; then
+            echo "❌ 服务器离线，执行重启..."
+            curl -s "$RESTART_URL"
+            curl -s "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" \
+              -d chat_id="$TG_CHAT_ID" \
+              -d text="🔄 已发送重启指令，请等待服务器恢复"
           fi
