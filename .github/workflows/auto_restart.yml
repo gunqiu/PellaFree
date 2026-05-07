@@ -20,12 +20,12 @@ jobs:
         run: |
           echo "🔍 正在检查服务器状态..."
 
-          # 获取服务器资源状态（修复接口）
-          res=$(curl -s "https://www.pella.app/api/client/servers/$SERVER_ID/resources" \
+          # 获取服务器状态
+          res=$(curl -s "https://www.pella.app/api/client/servers/$SERVER_ID" \
             -H "Authorization: Bearer $API_KEY")
 
-          # 正确提取运行状态
-          status=$(echo "$res" | grep -o '"current_state":"[^"]*"' | cut -d'"' -f4)
+          # 提取状态
+          status=$(echo "$res" | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
           echo "✅ 当前状态：$status"
 
           # 只有离线才重启
