@@ -1,4 +1,4 @@
-name: Pella 服务器监控 + 强制启停重启（修复版）
+name: Pella 服务器监控 + 调用 Workers 重启
 on:
   schedule:
     - cron: "*/30 * * * *"
@@ -13,55 +13,28 @@ jobs:
       API_KEY: ${{ secrets.API_KEY }}
       TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
       TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+      RESTART_URL: ${{ secrets.RESTART_URL }}
 
     steps:
-      - name: 检测状态 + 强制启停重启
+      - name: 检测状态 + 调用 Workers 重启
         run: |
           echo "🔍 检测服务器状态..."
-          # 1. 修正状态检测路径
+          # 用之前修正的路径检测状态
           RES=$(curl -s -L \
             -H "Authorization: Bearer $API_KEY" \
             "$PTERO_URL/api/client/servers/$SERVER_ID")
           
-          echo "📄 API返回: $RES"
-          # 2. 修正状态字段
           STATE=$(echo "$RES" | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
           echo "✅ 当前状态: $STATE"
 
           if [[ "$STATE" != "running" && "$STATE" != "starting" ]]; then
-            echo "❌ 服务器离线，执行强制启停..."
-
-            # 3. 修正停止/启动 API 路径
-            echo "🔌 发送 STOP 信号..."
-            curl -s -L -X POST \
-              -H "Authorization: Bearer $API_KEY" \
-              -H "Content-Type: application/json" \
-              -d '{"signal": "stop"}' \
-              "$PTERO_URL/api/client/servers/$SERVER_ID/power"
-            
-            sleep 10
-
-            echo "🚀 发送 START 信号..."
-            RESP=$(curl -s -L -w "%{http_code}" -X POST \
-              -H "Authorization: Bearer $API_KEY" \
-              -H "Content-Type: application/json" \
-              -d '{"signal": "start"}' \
-              "$PTERO_URL/api/client/servers/$SERVER_ID/power")
-            
-            HTTP_CODE=${RESP: -3}
-            echo "🔌 API响应码: $HTTP_CODE"
-
-            if [[ "$HTTP_CODE" == "204" || "$HTTP_CODE" == "200" ]]; then
-              echo "✅ 强制启停成功"
-              curl -s "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" \
-                -d chat_id="$TG_CHAT_ID" \
-                -d text="✅ Pella 服务器离线，已强制重启"
-            else
-              echo "❌ 重启失败，响应码: $HTTP_CODE"
-              curl -s "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" \
-                -d chat_id="$TG_CHAT_ID" \
-                -d text="❌ Pella 服务器离线，但重启失败！码: $HTTP_CODE"
-            fi
+            echo "❌ 服务器离线，调用 Workers 重启..."
+            # 直接调用你的 Workers 接口
+            curl -s "$RESTART_URL"
+            echo "✅ 已触发 Workers 重启任务"
+            curl -s "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" \
+              -d chat_id="$TG_CHAT_ID" \
+              -d text="❌ Pella 服务器离线 → 已通过 Workers 触发重启"
           else
             echo "✅ 服务器正常运行"
           fi
