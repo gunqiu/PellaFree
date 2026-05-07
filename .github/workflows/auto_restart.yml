@@ -1,47 +1,36 @@
-name: Pella 服务器监控 + 离线自动重启（纯官方API）
-on:
-  schedule:
-    - cron: "*/30 * * * *"  # 每30分钟检测一次（安全不封号）
-  workflow_dispatch:        # 可手动运行
+- name: 检测服务器状态 + 自动重启
+  run: |
+    echo "🔍 正在检测服务器状态..."
+    RES=$(curl -s -H "Authorization: Bearer $API_KEY" \
+      "$PTERO_URL/api/client/servers/$SERVER_ID/resources")
+    
+    STATE=$(echo "$RES" | grep -o '"current_state":"[^"]*"' | cut -d'"' -f4)
+    echo "📊 当前状态：$STATE"
 
-jobs:
-  check-and-restart:
-    runs-on: ubuntu-latest
-    env:
-      PTERO_URL: ${{ secrets.PTERO_URL }}
-      SERVER_ID: ${{ secrets.SERVER_ID }}
-      API_KEY: ${{ secrets.API_KEY }}
-      TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-      TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+    if [[ "$STATE" != "running" && "$STATE" != "starting" ]]; then
+      echo "❌ 服务器离线，正在调用重启 API..."
 
-    steps:
-      - name: 检测服务器状态 + 自动重启
-        run: |
-          # ========== 检测状态 ==========
-          echo "🔍 正在检测服务器状态..."
-          RES=$(curl -s -H "Authorization: Bearer $API_KEY" \
-            "$PTERO_URL/api/client/servers/$SERVER_ID/resources")
-          
-          STATE=$(echo "$RES" | grep -o '"current_state":"[^"]*"' | cut -d'"' -f4)
-          echo "📊 当前状态：$STATE"
+      # 调用重启 API，并捕获返回结果
+      RESPONSE=$(curl -s -w "%{http_code}" -X POST \
+        -H "Authorization: Bearer $API_KEY" \
+        -H "Content-Type: application/json" \
+        -d '{"action":"restart"}' \
+        "$PTERO_URL/api/client/servers/$SERVER_ID/power")
+      
+      HTTP_CODE=${RESPONSE: -3}
+      echo "🔌 API 响应码：$HTTP_CODE"
 
-          # ========== 异常 → 自动重启 + TG通知 ==========
-          if [[ "$STATE" != "running" && "$STATE" != "starting" ]]; then
-            echo "❌ 服务器离线，正在自动重启..."
-
-            # 直接调用 Pella 官方重启 API（核心！）
-            curl -s -X POST \
-              -H "Authorization: Bearer $API_KEY" \
-              -H "Content-Type: application/json" \
-              -d '{"action":"restart"}' \
-              "$PTERO_URL/api/client/servers/$SERVER_ID/power"
-
-            echo "✅ 重启指令发送成功"
-
-            # TG 通知
-            curl -s "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" \
-              -d chat_id="$TG_CHAT_ID" \
-              -d text="❌ Pella 服务器离线，已自动重启！"
-          else
-            echo "✅ 服务器正常运行"
-          fi
+      if [[ "$HTTP_CODE" == "204" || "$HTTP_CODE" == "200" ]]; then
+        echo "✅ 重启指令发送成功"
+        curl -s "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" \
+          -d chat_id="$TG_CHAT_ID" \
+          -d text="✅ Pella 服务器离线，重启指令已成功发送！"
+      else
+        echo "❌ 重启 API 调用失败，HTTP 码：$HTTP_CODE"
+        curl -s "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" \
+          -d chat_id="$TG_CHAT_ID" \
+          -d text="❌ Pella 服务器离线，但重启失败！API 响应码：$HTTP_CODE"
+      fi
+    else
+      echo "✅ 服务器正常运行"
+    fi
