@@ -1,0 +1,36 @@
+name: 服务器挂掉自动重启
+on:
+  schedule:
+    - cron: "*/10 * * * *"  # 每10分钟检测一次
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检测状态 + 离线自动重启
+        env:
+          PTERO_URL: ${{ secrets.PTERO_URL }}
+          SERVER_ID: ${{ secrets.SERVER_ID }}
+          API_KEY: ${{ secrets.API_KEY }}
+          RESTART_API: ${{ secrets.RESTART_API }}
+        run: |
+          echo "🔍 检测服务器状态..."
+
+          # 获取服务器状态
+          res=$(curl -s "$PTERO_URL/api/client/servers/$SERVER_ID/resources" \
+            -H "Authorization: Bearer $API_KEY" \
+            -H "Accept: "application/json")
+
+          # 提取状态
+          state=$(echo "$res" | grep -o '"current_state":"[^"]*"' | cut -d '"' -f4)
+          echo "当前状态：$state"
+
+          # 如果离线 → 自动重启
+          if [[ "$state" != "running" && "$state" != "starting" ]]; then
+            echo "❌ 服务器挂了，自动重启..."
+            curl -s "$RESTART_API"
+            echo "✅ 重启指令已发送"
+          else
+            echo "✅ 服务器正常"
+          fi
